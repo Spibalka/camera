@@ -1,0 +1,117 @@
+name: Build Ravenport Android APK
+
+on:
+  push:
+    branches: [ravenport-android-build]
+    paths:
+      - '.ravenport/**'
+      - '.github/workflows/ravenport-android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout build branch
+        uses: actions/checkout@v4
+
+      - name: Reconstruct Ravenport project
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .ravenport/payload.part00 .ravenport/payload.part01 .ravenport/payload.part02 > /tmp/payload.b85
+          python3 - <<'PY'
+          import base64, pathlib
+          src = pathlib.Path('/tmp/payload.b85').read_text().encode('ascii')
+          pathlib.Path('/tmp/ravenport.tar.gz').write_bytes(base64.b85decode(src))
+          PY
+          tar -xzf /tmp/ravenport.tar.gz
+          python3 RavenportMystery/tools/regenerate_player_art.py
+          python3 RavenportMystery/tools/regenerate_npc_art.py
+
+      - name: Generate original placeholder audio
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import math, random, wave, struct
+          out=Path('RavenportMystery/assets/audio'); out.mkdir(parents=True, exist_ok=True)
+          rate=44100
+          def save(name, seconds, fn, amp=.25):
+              n=int(rate*seconds)
+              with wave.open(str(out/name),'w') as w:
+                  w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
+                  data=bytearray()
+                  for i in range(n):
+                      x=max(-1,min(1,fn(i/rate,i,n)))*amp
+                      data += struct.pack('<h', int(x*32767))
+                  w.writeframes(data)
+          save('music_station.wav', 12, lambda t,i,n: .45*math.sin(2*math.pi*110*t)+.25*math.sin(2*math.pi*165*t)+.15*math.sin(2*math.pi*220*t), .18)
+          rng=random.Random(1907)
+          noise=[rng.uniform(-1,1) for _ in range(rate*8)]
+          save('ambient_rain.wav', 8, lambda t,i,n: noise[i]*(.35+.2*math.sin(2*math.pi*.12*t)), .16)
+          for k,f in [(1,115),(2,102)]:
+              save(f'step_{k}.wav', .16, lambda t,i,n,f=f: math.sin(2*math.pi*f*t)*math.exp(-28*t)+.2*math.sin(2*math.pi*(f*2.2)*t)*math.exp(-38*t), .45)
+          save('ui_click.wav', .07, lambda t,i,n: math.sin(2*math.pi*980*t)*math.exp(-55*t), .24)
+          save('item.wav', .20, lambda t,i,n: math.sin(2*math.pi*(520+700*t)*t)*math.exp(-10*t), .28)
+          save('door.wav', .65, lambda t,i,n: (math.sin(2*math.pi*74*t)+.35*math.sin(2*math.pi*121*t))*math.exp(-2.8*t), .32)
+          save('bell.wav', 1.6, lambda t,i,n: (math.sin(2*math.pi*440*t)+.55*math.sin(2*math.pi*880*t)+.25*math.sin(2*math.pi*1320*t))*math.exp(-2.4*t), .30)
+          PY
+
+      - name: Install Godot 4.7.2 and export templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          wget -q https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip -O /tmp/godot.zip
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          sudo install -m 0755 /tmp/godot/Godot_v4.7.2-stable_linux.x86_64 /usr/local/bin/godot
+          wget -q https://github.com/godotengine/godot-builds/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz -O /tmp/templates.tpz
+          rm -rf /tmp/godot-templates
+          mkdir -p /tmp/godot-templates "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+          unzip -q /tmp/templates.tpz -d /tmp/godot-templates
+          cp -a /tmp/godot-templates/templates/. "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
+          godot --version
+
+      - name: Prepare Android signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.android"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -keypass android -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000
+          fi
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "JAVA_HOME=$JAVA_HOME"
+          ls "$ANDROID_HOME/build-tools" | tail -1
+
+      - name: Import project resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd RavenportMystery
+          timeout 120 godot --headless --editor --path . --quit-after 20 || true
+
+      - name: Export Android APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd RavenportMystery
+          mkdir -p build
+          godot --headless --path . --export-debug "Android" build/RavenportMystery.apk
+          test -s build/RavenportMystery.apk
+          sha256sum build/RavenportMystery.apk | tee build/RavenportMystery.apk.sha256
+          ls -lh build/RavenportMystery.apk
+
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: RavenportMystery-Android-APK
+          path: |
+            RavenportMystery/build/RavenportMystery.apk
+            RavenportMystery/build/RavenportMystery.apk.sha256
+          if-no-files-found: error
+          retention-days: 30
