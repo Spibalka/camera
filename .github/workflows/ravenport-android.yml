@@ -33,6 +33,61 @@ jobs:
           python3 RavenportMystery/tools/regenerate_player_art.py
           python3 RavenportMystery/tools/regenerate_npc_art.py
 
+      - name: Apply Godot 4.7 compatibility fixes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new):
+              p = Path(path)
+              s = p.read_text()
+              if old not in s:
+                  raise SystemExit(f'Expected text not found in {path}: {old!r}')
+              p.write_text(s.replace(old, new))
+
+          replace('RavenportMystery/scripts/autoload/SceneManager.gd',
+                  'var t := clamp(inverse_lerp(370.0, 980.0, y), 0.0, 1.0)',
+                  'var t: float = clampf(inverse_lerp(370.0, 980.0, y), 0.0, 1.0)')
+
+          nav = Path('RavenportMystery/scripts/navigation/NavigationGrid.gd')
+          s = nav.read_text().replace('func get_path(from_world: Vector2, to_world: Vector2, dynamic_positions: Array[Vector2] = []) -> PackedVector2Array:',
+                                      'func compute_path(from_world: Vector2, to_world: Vector2, dynamic_positions: Array[Vector2] = []) -> PackedVector2Array:')
+          nav.write_text(s)
+
+          replace('RavenportMystery/scripts/player/PlayerController.gd',
+                  'path = navigation.get_path(global_position, destination, blockers)',
+                  'path = navigation.compute_path(global_position, destination, blockers)')
+          replace('RavenportMystery/scripts/player/PlayerController.gd',
+                  'var actual_velocity := (global_position - before) / max(delta, 0.0001)',
+                  'var actual_velocity: Vector2 = (global_position - before) / maxf(delta, 0.0001)')
+
+          replace('RavenportMystery/scripts/tests/ProjectSelfTest.gd',
+                  'var test_path := level.navigation.get_path(level.player.global_position, Vector2(1500, 900), [])',
+                  'var test_path: PackedVector2Array = level.navigation.compute_path(level.player.global_position, Vector2(1500, 900), [])')
+
+          replace('RavenportMystery/scripts/ui/GameUI.gd',
+                  'var right_px := max(0.0, window_px.x - float(safe_px.position.x + safe_px.size.x))',
+                  'var right_px: float = maxf(0.0, window_px.x - float(safe_px.position.x + safe_px.size.x))')
+          replace('RavenportMystery/scripts/ui/GameUI.gd',
+                  'var bottom_px := max(0.0, window_px.y - float(safe_px.position.y + safe_px.size.y))',
+                  'var bottom_px: float = maxf(0.0, window_px.y - float(safe_px.position.y + safe_px.size.y))')
+
+          preset = Path('RavenportMystery/export_presets.cfg')
+          s = preset.read_text()
+          # Standard APK template does not allow overriding these unless Gradle is enabled.
+          first = s.split('[preset.1]', 1)
+          first[0] = first[0].replace('gradle_build/min_sdk="24"\n', '').replace('gradle_build/target_sdk="35"\n', '')
+          preset.write_text(first[0] + ('[preset.1]' + first[1] if len(first) == 2 else ''))
+
+          project = Path('RavenportMystery/project.godot')
+          s = project.read_text()
+          if 'textures/vram_compression/import_etc2_astc=' not in s:
+              marker = '[rendering]\n'
+              s = s.replace(marker, marker + 'textures/vram_compression/import_etc2_astc=true\n', 1)
+          project.write_text(s)
+          PY
+
       - name: Generate original placeholder audio
         shell: bash
         run: |
@@ -88,12 +143,16 @@ jobs:
           echo "JAVA_HOME=$JAVA_HOME"
           ls "$ANDROID_HOME/build-tools" | tail -1
 
-      - name: Import project resources
+      - name: Import project resources and validate scripts
         shell: bash
         run: |
           set -euo pipefail
           cd RavenportMystery
-          timeout 120 godot --headless --editor --path . --quit-after 20 || true
+          godot --headless --editor --path . --quit-after 25 2>&1 | tee /tmp/godot-import.log
+          if grep -E 'SCRIPT ERROR: Parse Error|Failed to load script' /tmp/godot-import.log; then
+            echo 'GDScript validation failed.' >&2
+            exit 1
+          fi
 
       - name: Export Android APK
         shell: bash
