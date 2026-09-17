@@ -33,58 +33,73 @@ jobs:
           python3 RavenportMystery/tools/regenerate_player_art.py
           python3 RavenportMystery/tools/regenerate_npc_art.py
 
+      - name: Apply hand-drawn visual rework
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, subprocess
+          src = Path('.ravenport/rework_assets.b85').read_text().encode('ascii')
+          Path('/tmp/rework_assets.tar.gz').write_bytes(base64.b85decode(src))
+          subprocess.check_call(['tar','-xzf','/tmp/rework_assets.tar.gz','-C','RavenportMystery'])
+
+          p = Path('RavenportMystery/tools/regenerate_player_art.py')
+          s = p.read_text()
+          s = s.replace("INK='#2b2522'; JACKET='#825c36'; JACKET_DARK='#68472f'; SHIRT='#d9c49c'; PANTS='#48505e'; PANTS_DARK='#343b47'; SKIN='#d3a17c'; HAIR='#49362f'; SHOE='#262729'; HILITE='#ad8052'", "INK='#171719'; JACKET='#245a4b'; JACKET_DARK='#163d35'; SHIRT='#f0ead8'; PANTS='#526c91'; PANTS_DARK='#394f70'; SKIN='#e0ad7e'; HAIR='#b07839'; SHOE='#352a24'; HILITE='#4f8a72'")
+          p.write_text(s)
+
+          p = Path('RavenportMystery/tools/regenerate_npc_art.py')
+          s = p.read_text().replace('INK = "#2b2422"','INK = "#171719"').replace('SHOE = "#292826"','SHOE = "#352a24"')
+          s = s.replace('"skin": "#d7aa83", "hair": "#4b342c", "coat": "#5a496d", "coat_dark": "#443650",\n        "scarf": "#8fb1a7", "pants_a": "#393a3e", "pants_b": "#34363b"','"skin": "#e0ad82", "hair": "#5a3526", "coat": "#6d477e", "coat_dark": "#493056",\n        "scarf": "#a8c6bb", "pants_a": "#3d4050", "pants_b": "#303440"')
+          s = s.replace('"skin": "#c28f69", "hair": "#5a4a37", "coat": "#445865", "coat_dark": "#31424c",\n        "scarf": "#c38d4c", "pants_a": "#3e4147", "pants_b": "#34363b"','"skin": "#cf956d", "hair": "#5b4430", "coat": "#486574", "coat_dark": "#2e4653",\n        "scarf": "#d69a4c", "pants_a": "#444954", "pants_b": "#343943"')
+          p.write_text(s)
+
+          p = Path('RavenportMystery/scripts/ui/GameUI.gd')
+          s = p.read_text()
+          old = '''func _make_button(text: String, min_size := Vector2(150, 74)) -> Button:\n\tvar button := Button.new()\n\tbutton.text = text\n\tbutton.custom_minimum_size = min_size\n\tbutton.add_theme_font_size_override("font_size", 24)\n\treturn button\n'''
+          new = '''func _classic_box(fill: Color, border: Color = Color(0.82, 0.70, 0.49, 1.0), radius: int = 8) -> StyleBoxFlat:\n\tvar box := StyleBoxFlat.new()\n\tbox.bg_color = fill\n\tbox.border_color = border\n\tbox.set_border_width_all(2)\n\tbox.set_corner_radius_all(radius)\n\tbox.content_margin_left = 16\n\tbox.content_margin_right = 16\n\tbox.content_margin_top = 10\n\tbox.content_margin_bottom = 10\n\treturn box\n\nfunc _skin_panel(panel: PanelContainer, alpha: float = 0.90) -> void:\n\tpanel.add_theme_stylebox_override("panel", _classic_box(Color(0.055, 0.05, 0.045, alpha), Color(0.74, 0.60, 0.39, 0.95), 10))\n\nfunc _make_button(text: String, min_size := Vector2(150, 74)) -> Button:\n\tvar button := Button.new()\n\tbutton.text = text\n\tbutton.custom_minimum_size = min_size\n\tbutton.add_theme_font_size_override("font_size", 24)\n\tbutton.add_theme_color_override("font_color", Color(0.95, 0.91, 0.80))\n\tbutton.add_theme_color_override("font_hover_color", Color(1.0, 0.86, 0.52))\n\tbutton.add_theme_color_override("font_pressed_color", Color(1.0, 0.78, 0.34))\n\tbutton.add_theme_stylebox_override("normal", _classic_box(Color(0.055, 0.05, 0.045, 0.90)))\n\tbutton.add_theme_stylebox_override("hover", _classic_box(Color(0.12, 0.10, 0.075, 0.96), Color(0.95, 0.76, 0.42, 1.0)))\n\tbutton.add_theme_stylebox_override("pressed", _classic_box(Color(0.18, 0.13, 0.075, 0.98), Color(1.0, 0.72, 0.25, 1.0)))\n\treturn button\n'''
+          if old in s:
+              s = s.replace(old, new)
+          for marker in ['action_panel = PanelContainer.new()','inventory_panel = PanelContainer.new()','dialogue_panel = PanelContainer.new()','save_panel = PanelContainer.new()','toast_panel = PanelContainer.new()']:
+              line = '\t_skin_panel(' + marker.split(' =')[0] + ', 0.92)'
+              if marker in s and line not in s:
+                  s = s.replace(marker, marker + '\n' + line)
+          p.write_text(s)
+
+          p = Path('RavenportMystery/tools/validate_project.py')
+          s = p.read_text().replace('fill="#48505e" stroke="#2b2522" stroke-width="4.8"','fill="#526c91" stroke="#171719" stroke-width="4.8"')
+          p.write_text(s)
+          subprocess.check_call(['python3','RavenportMystery/tools/regenerate_player_art.py'])
+          subprocess.check_call(['python3','RavenportMystery/tools/regenerate_npc_art.py'])
+          PY
+
       - name: Apply Godot 4.7 compatibility fixes
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
           def replace(path, old, new):
               p = Path(path)
               s = p.read_text()
               if old not in s:
                   raise SystemExit(f'Expected text not found in {path}: {old!r}')
               p.write_text(s.replace(old, new))
-
-          replace('RavenportMystery/scripts/autoload/SceneManager.gd',
-                  'var t := clamp(inverse_lerp(370.0, 980.0, y), 0.0, 1.0)',
-                  'var t: float = clampf(inverse_lerp(370.0, 980.0, y), 0.0, 1.0)')
-
+          replace('RavenportMystery/scripts/autoload/SceneManager.gd','var t := clamp(inverse_lerp(370.0, 980.0, y), 0.0, 1.0)','var t: float = clampf(inverse_lerp(370.0, 980.0, y), 0.0, 1.0)')
           nav = Path('RavenportMystery/scripts/navigation/NavigationGrid.gd')
-          s = nav.read_text().replace('func get_path(from_world: Vector2, to_world: Vector2, dynamic_positions: Array[Vector2] = []) -> PackedVector2Array:',
-                                      'func compute_path(from_world: Vector2, to_world: Vector2, dynamic_positions: Array[Vector2] = []) -> PackedVector2Array:')
+          s = nav.read_text().replace('func get_path(from_world: Vector2, to_world: Vector2, dynamic_positions: Array[Vector2] = []) -> PackedVector2Array:','func compute_path(from_world: Vector2, to_world: Vector2, dynamic_positions: Array[Vector2] = []) -> PackedVector2Array:')
           nav.write_text(s)
-
-          replace('RavenportMystery/scripts/player/PlayerController.gd',
-                  'path = navigation.get_path(global_position, destination, blockers)',
-                  'path = navigation.compute_path(global_position, destination, blockers)')
-          replace('RavenportMystery/scripts/player/PlayerController.gd',
-                  'var actual_velocity := (global_position - before) / max(delta, 0.0001)',
-                  'var actual_velocity: Vector2 = (global_position - before) / maxf(delta, 0.0001)')
-
-          replace('RavenportMystery/scripts/tests/ProjectSelfTest.gd',
-                  'var test_path := level.navigation.get_path(level.player.global_position, Vector2(1500, 900), [])',
-                  'var test_path: PackedVector2Array = level.navigation.compute_path(level.player.global_position, Vector2(1500, 900), [])')
-
-          replace('RavenportMystery/scripts/ui/GameUI.gd',
-                  'var right_px := max(0.0, window_px.x - float(safe_px.position.x + safe_px.size.x))',
-                  'var right_px: float = maxf(0.0, window_px.x - float(safe_px.position.x + safe_px.size.x))')
-          replace('RavenportMystery/scripts/ui/GameUI.gd',
-                  'var bottom_px := max(0.0, window_px.y - float(safe_px.position.y + safe_px.size.y))',
-                  'var bottom_px: float = maxf(0.0, window_px.y - float(safe_px.position.y + safe_px.size.y))')
-
+          replace('RavenportMystery/scripts/player/PlayerController.gd','path = navigation.get_path(global_position, destination, blockers)','path = navigation.compute_path(global_position, destination, blockers)')
+          replace('RavenportMystery/scripts/player/PlayerController.gd','var actual_velocity := (global_position - before) / max(delta, 0.0001)','var actual_velocity: Vector2 = (global_position - before) / maxf(delta, 0.0001)')
+          replace('RavenportMystery/scripts/tests/ProjectSelfTest.gd','var test_path := level.navigation.get_path(level.player.global_position, Vector2(1500, 900), [])','var test_path: PackedVector2Array = level.navigation.compute_path(level.player.global_position, Vector2(1500, 900), [])')
+          replace('RavenportMystery/scripts/ui/GameUI.gd','var right_px := max(0.0, window_px.x - float(safe_px.position.x + safe_px.size.x))','var right_px: float = maxf(0.0, window_px.x - float(safe_px.position.x + safe_px.size.x))')
+          replace('RavenportMystery/scripts/ui/GameUI.gd','var bottom_px := max(0.0, window_px.y - float(safe_px.position.y + safe_px.size.y))','var bottom_px: float = maxf(0.0, window_px.y - float(safe_px.position.y + safe_px.size.y))')
           preset = Path('RavenportMystery/export_presets.cfg')
-          s = preset.read_text()
-          # Standard APK template does not allow overriding these unless Gradle is enabled.
-          first = s.split('[preset.1]', 1)
-          first[0] = first[0].replace('gradle_build/min_sdk="24"\n', '').replace('gradle_build/target_sdk="35"\n', '')
-          preset.write_text(first[0] + ('[preset.1]' + first[1] if len(first) == 2 else ''))
-
+          s = preset.read_text(); first = s.split('[preset.1]', 1); first[0] = first[0].replace('gradle_build/min_sdk="24"\n', '').replace('gradle_build/target_sdk="35"\n', ''); preset.write_text(first[0] + ('[preset.1]' + first[1] if len(first) == 2 else ''))
           project = Path('RavenportMystery/project.godot')
           s = project.read_text()
           if 'textures/vram_compression/import_etc2_astc=' not in s:
-              marker = '[rendering]\n'
-              s = s.replace(marker, marker + 'textures/vram_compression/import_etc2_astc=true\n', 1)
+              s = s.replace('[rendering]\n', '[rendering]\ntextures/vram_compression/import_etc2_astc=true\n', 1)
           project.write_text(s)
           PY
 
@@ -99,18 +114,14 @@ jobs:
           def save(name, seconds, fn, amp=.25):
               n=int(rate*seconds)
               with wave.open(str(out/name),'w') as w:
-                  w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
-                  data=bytearray()
+                  w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate); data=bytearray()
                   for i in range(n):
-                      x=max(-1,min(1,fn(i/rate,i,n)))*amp
-                      data += struct.pack('<h', int(x*32767))
+                      x=max(-1,min(1,fn(i/rate,i,n)))*amp; data += struct.pack('<h', int(x*32767))
                   w.writeframes(data)
           save('music_station.wav', 12, lambda t,i,n: .45*math.sin(2*math.pi*110*t)+.25*math.sin(2*math.pi*165*t)+.15*math.sin(2*math.pi*220*t), .18)
-          rng=random.Random(1907)
-          noise=[rng.uniform(-1,1) for _ in range(rate*8)]
+          rng=random.Random(1907); noise=[rng.uniform(-1,1) for _ in range(rate*8)]
           save('ambient_rain.wav', 8, lambda t,i,n: noise[i]*(.35+.2*math.sin(2*math.pi*.12*t)), .16)
-          for k,f in [(1,115),(2,102)]:
-              save(f'step_{k}.wav', .16, lambda t,i,n,f=f: math.sin(2*math.pi*f*t)*math.exp(-28*t)+.2*math.sin(2*math.pi*(f*2.2)*t)*math.exp(-38*t), .45)
+          for k,f in [(1,115),(2,102)]: save(f'step_{k}.wav', .16, lambda t,i,n,f=f: math.sin(2*math.pi*f*t)*math.exp(-28*t)+.2*math.sin(2*math.pi*(f*2.2)*t)*math.exp(-38*t), .45)
           save('ui_click.wav', .07, lambda t,i,n: math.sin(2*math.pi*980*t)*math.exp(-55*t), .24)
           save('item.wav', .20, lambda t,i,n: math.sin(2*math.pi*(520+700*t)*t)*math.exp(-10*t), .28)
           save('door.wav', .65, lambda t,i,n: (math.sin(2*math.pi*74*t)+.35*math.sin(2*math.pi*121*t))*math.exp(-2.8*t), .32)
@@ -136,12 +147,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.android"
-          if [ ! -f "$HOME/.android/debug.keystore" ]; then
-            keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -keypass android -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000
-          fi
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "JAVA_HOME=$JAVA_HOME"
-          ls "$ANDROID_HOME/build-tools" | tail -1
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey -keypass android -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000; fi
+          echo "ANDROID_HOME=$ANDROID_HOME"; echo "JAVA_HOME=$JAVA_HOME"; ls "$ANDROID_HOME/build-tools" | tail -1
 
       - name: Import project resources and validate scripts
         shell: bash
@@ -149,10 +156,7 @@ jobs:
           set -euo pipefail
           cd RavenportMystery
           godot --headless --editor --path . --quit-after 25 2>&1 | tee /tmp/godot-import.log
-          if grep -E 'SCRIPT ERROR: Parse Error|Failed to load script' /tmp/godot-import.log; then
-            echo 'GDScript validation failed.' >&2
-            exit 1
-          fi
+          if grep -E 'SCRIPT ERROR: Parse Error|Failed to load script' /tmp/godot-import.log; then echo 'GDScript validation failed.' >&2; exit 1; fi
 
       - name: Export Android APK
         shell: bash
